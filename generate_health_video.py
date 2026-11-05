@@ -1,4 +1,4 @@
-import os, sys, json, asyncio, subprocess
+import os, sys, json, asyncio, subprocess, urllib.request
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 import edge_tts, imageio_ffmpeg
@@ -7,6 +7,14 @@ FFMPEG = imageio_ffmpeg.get_ffmpeg_exe()
 FONT_PATH = "/usr/share/fonts/pickle-hwp/NotoSansCJKkr-Regular.otf"
 WIDTH, HEIGHT = 1080, 1920
 FPS = 30
+
+# ElevenLabs Korean Voices (Top Creator Picks)
+ELEVEN_VOICES = {
+    "chris": "PDoCXqBQFGsvfO0hNkEs",      # Chris (캐주얼 대화·쇼츠 1위 남성)
+    "yohan": "4JJwo477JUAx3HV0T7n7",      # Yohan Koo (건강·지식 정보 신뢰감 남성)
+    "kkc": "1W00IGEmNmwmsDeYy7ag",        # KKC/Mike (빠른 텐션 숏폼 전용 남성)
+    "anna": "uyVNoMrnUku1dZyVEXwD"        # Anna Kim (깔끔하고 세련된 정통 여성)
+}
 
 def get_font(size):
     return ImageFont.truetype(FONT_PATH, size)
@@ -26,78 +34,76 @@ def wrap_text(text, font, max_w, draw):
     return lines
 
 def create_ui_overlay(header_title, header_sub, text, keyword, progress):
-    """Create a 1080x1920 transparent PNG overlay with Top Banner, Subtitles, Keyword & Progress Bar."""
     img = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
 
-    # Top gradient shadow for header
     for y in range(400):
         alpha = int(160 * (1.0 - y / 400.0))
         draw.line([(0, y), (WIDTH, y)], fill=(10, 14, 22, alpha))
 
-    # 1. Top Header Title (Reels style: Big bold white headline)
     head_font = get_font(68)
     h_bbox = draw.textbbox((0, 0), header_title, font=head_font)
-    hw = h_bbox[2] - h_bbox[0]
-    hx = (WIDTH - hw) // 2
-    hy = 180
-    draw.text((hx, hy), header_title, font=head_font, fill=(255, 255, 255), stroke_width=4, stroke_fill=(15, 20, 30))
+    draw.text(((WIDTH - (h_bbox[2] - h_bbox[0])) // 2, 180), header_title, font=head_font, fill=(255, 255, 255), stroke_width=4, stroke_fill=(15, 20, 30))
 
-    # Top Subtitle line
     sub_head_font = get_font(38)
     sh_bbox = draw.textbbox((0, 0), header_sub, font=sub_head_font)
-    shw = sh_bbox[2] - sh_bbox[0]
-    shx = (WIDTH - shw) // 2
-    shy = 270
-    draw.text((shx, shy), header_sub, font=sub_head_font, fill=(255, 215, 0), stroke_width=2, stroke_fill=(20, 20, 20))
+    draw.text(((WIDTH - (sh_bbox[2] - sh_bbox[0])) // 2, 270), header_sub, font=sub_head_font, fill=(255, 215, 0), stroke_width=2, stroke_fill=(20, 20, 20))
 
-    # 2. Lower-Center Subtitle (Reels style: Large white text with black outline)
     sub_font = get_font(52)
-    max_w = WIDTH - 160
-    lines = wrap_text(text, sub_font, max_w, draw)
+    lines = wrap_text(text, sub_font, WIDTH - 160, draw)
     line_h = 82
     total_h = len(lines) * line_h
     start_y = 1250 - total_h // 2
 
-    # Draw semi-transparent pill backdrop behind subtitle
     pad_x, pad_y = 40, 25
     box_w = min(WIDTH - 100, max(draw.textbbox((0,0), l, font=sub_font)[2] - draw.textbbox((0,0), l, font=sub_font)[0] for l in lines) + pad_x*2)
     box_x = (WIDTH - box_w) // 2
-    box_rect = [box_x, start_y - pad_y, box_x + box_w, start_y + total_h + pad_y]
-    draw.rounded_rectangle(box_rect, radius=24, fill=(15, 20, 30, 215), outline=(255, 255, 255, 45), width=2)
+    draw.rounded_rectangle([box_x, start_y - pad_y, box_x + box_w, start_y + total_h + pad_y], radius=24, fill=(15, 20, 30, 215), outline=(255, 255, 255, 45), width=2)
 
     for i, line in enumerate(lines):
         l_bbox = draw.textbbox((0, 0), line, font=sub_font)
-        lw = l_bbox[2] - l_bbox[0]
-        lx = (WIDTH - lw) // 2
-        ly = start_y + i * line_h
-        draw.text((lx, ly), line, font=sub_font, fill=(255, 255, 255), stroke_width=3, stroke_fill=(10, 10, 15))
+        draw.text(((WIDTH - (l_bbox[2] - l_bbox[0])) // 2, start_y + i * line_h), line, font=sub_font, fill=(255, 255, 255), stroke_width=3, stroke_fill=(10, 10, 15))
 
-    # 3. Bottom Keyword tag
     if keyword:
         kw_font = get_font(38)
         kw_text = f"#{keyword}"
         kw_bbox = draw.textbbox((0, 0), kw_text, font=kw_font)
-        kw_w = kw_bbox[2] - kw_bbox[0]
-        kw_x = (WIDTH - kw_w) // 2
-        draw.text((kw_x, 1720), kw_text, font=kw_font, fill=(240, 240, 240), stroke_width=2, stroke_fill=(10, 10, 10))
+        draw.text(((WIDTH - (kw_bbox[2] - kw_bbox[0])) // 2, 1720), kw_text, font=kw_font, fill=(240, 240, 240), stroke_width=2, stroke_fill=(10, 10, 10))
 
-    # 4. Progress bar at bottom
     bar_w, bar_y = 960, 1830
     bar_x = (WIDTH - bar_w) // 2
     draw.rounded_rectangle([bar_x, bar_y, bar_x + bar_w, bar_y + 10], radius=5, fill=(60, 70, 90, 180))
     fill_w = int(bar_w * max(0.05, min(1.0, progress)))
     draw.rounded_rectangle([bar_x, bar_y, bar_x + fill_w, bar_y + 10], radius=5, fill=(255, 204, 0, 240))
-
     return img
 
-async def tts(text, voice, out_path):
-    # rate=+14% for crisp energetic tempo, pitch=+1Hz
-    c = edge_tts.Communicate(text, voice, rate="+14%")
+def elevenlabs_tts(text, voice_key, out_path, api_key):
+    voice_id = ELEVEN_VOICES.get(voice_key, ELEVEN_VOICES["yohan"])
+    url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
+    headers = {
+        "Accept": "audio/mpeg",
+        "Content-Type": "application/json",
+        "xi-api-key": api_key
+    }
+    payload = json.dumps({
+        "text": text,
+        "model_id": "eleven_multilingual_v2",
+        "voice_settings": {
+            "stability": 0.38,
+            "similarity_boost": 0.75,
+            "speed": 1.12
+        }
+    }).encode("utf-8")
+    req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
+    with urllib.request.urlopen(req) as resp:
+        with open(out_path, "wb") as f:
+            f.write(resp.read())
+
+async def edge_fallback_tts(text, out_path):
+    c = edge_tts.Communicate(text, "ko-KR-HyunsuMultilingualNeural", rate="+14%")
     await c.save(out_path)
 
 def trim_silence(in_path, out_path):
-    """Trim leading and trailing dead silence to keep pacing snappy."""
     cmd = [
         FFMPEG, "-y", "-i", in_path,
         "-af", "silenceremove=start_periods=1:start_duration=0.04:start_threshold=-40dB,areverse,silenceremove=start_periods=1:start_duration=0.04:start_threshold=-40dB,areverse",
@@ -115,26 +121,21 @@ def get_audio_duration(path):
             return float(h)*3600 + float(m)*60 + float(s)
     return 3.0
 
-# Prepare motion zoompan filters for each scene
 MOTION_FILTERS = [
-    # Scene 1: Smooth Zoom In
     "zoompan=z='min(zoom+0.0015,1.25)':d={frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps=30",
-    # Scene 2: Zoom in with subtle drift
     "zoompan=z='min(zoom+0.0018,1.28)':d={frames}:x='(iw-iw/zoom)*0.55':y='(ih-ih/zoom)*0.45':s=1080x1920:fps=30",
-    # Scene 3: Smooth Zoom out
     "zoompan=z='max(1.22-0.0015*on,1.0)':d={frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps=30",
-    # Scene 4: Zoom in from bottom-center
     "zoompan=z='min(zoom+0.0016,1.26)':d={frames}:x='iw/2-(iw/zoom/2)':y='(ih-ih/zoom)*0.6':s=1080x1920:fps=30",
-    # Scene 5: Gentle Zoom in
     "zoompan=z='min(zoom+0.0014,1.22)':d={frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps=30"
 ]
 
 async def main():
+    voice_choice = os.environ.get("VOICE_CHOICE", "yohan").lower()
+    eleven_key = os.environ.get("ELEVENLABS_API_KEY", "").strip()
+
     os.makedirs("temp_dynamic", exist_ok=True)
     os.makedirs("downloads", exist_ok=True)
 
-    # Use HyunsuMultilingualNeural for most natural, human-sounding Korean narration
-    voice = "ko-KR-HyunsuMultilingualNeural"
     scenes = [
         {
             "bg": "downloads/bg_morning.png",
@@ -174,7 +175,7 @@ async def main():
     ]
 
     concat_list = []
-    print(f"🎬 Processing {len(scenes)} scenes with Motion & Natural Voice...")
+    print(f"🎬 Processing with Voice: {voice_choice} (ElevenLabs: {'ON' if eleven_key else 'Fallback Edge-TTS'})...")
 
     for idx, sc in enumerate(scenes):
         raw_a = f"temp_dynamic/raw_a_{idx}.mp3"
@@ -183,21 +184,23 @@ async def main():
         scene_mp4 = f"temp_dynamic/scene_{idx}.mp4"
         prog = (idx + 1) / len(scenes)
 
-        print(f"  [{idx+1}/{len(scenes)}] Synthesizing & trimming voice...")
-        await tts(sc["text"], voice, raw_a)
+        if eleven_key:
+            print(f"  [{idx+1}/{len(scenes)}] ElevenLabs TTS ({voice_choice})...")
+            elevenlabs_tts(sc["text"], voice_choice, raw_a, eleven_key)
+        else:
+            print(f"  [{idx+1}/{len(scenes)}] Fallback Edge-TTS...")
+            await edge_fallback_tts(sc["text"], raw_a)
+
         trim_silence(raw_a, trim_a)
-        dur = get_audio_duration(trim_a) # Exact audio duration, zero pause!
+        dur = get_audio_duration(trim_a)
         total_frames = int(dur * FPS) + 1
 
-        # Create overlay
         ui_img = create_ui_overlay(sc["header_title"], sc["header_sub"], sc["text"], sc["keyword"], prog)
         ui_img.save(ui_png)
 
-        # Apply motion zoompan filter + overlay UI
         motion_vf = MOTION_FILTERS[idx % len(MOTION_FILTERS)].format(frames=total_frames)
         complex_filter = f"[0:v]{motion_vf}[bg];[bg][1:v]overlay=0:0[outv]"
 
-        print(f"    Rendering motion clip ({dur:.2f}s, {total_frames} frames)...")
         cmd = [
             FFMPEG, "-y",
             "-loop", "1", "-i", sc["bg"],
@@ -218,15 +221,8 @@ async def main():
         f.write("\n".join(concat_list))
 
     out_mp4 = "downloads/health_empty_stomach_dynamic.mp4"
-    cmd = [
-        FFMPEG, "-y",
-        "-f", "concat", "-safe", "0", "-i", concat_txt,
-        "-c", "copy", out_mp4
-    ]
-    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+    subprocess.run([FFMPEG, "-y", "-f", "concat", "-safe", "0", "-i", concat_txt, "-c", "copy", out_mp4], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+    print("✅ Complete")
 
-    thumb = "downloads/health_dynamic_thumb.jpg"
-    subprocess.run([FFMPEG, "-y", "-ss", "00:00:07", "-i", out_mp4, "-vframes", "1", thumb], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    print(f"✅ Dynamic Shorts Complete: {out_mp4} & {thumb}")
-
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())
