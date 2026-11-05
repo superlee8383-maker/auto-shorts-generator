@@ -1,11 +1,12 @@
 import os, sys, json, asyncio, subprocess
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont, ImageFilter
+from PIL import Image, ImageDraw, ImageFont
 import edge_tts, imageio_ffmpeg
 
 FFMPEG = imageio_ffmpeg.get_ffmpeg_exe()
 FONT_PATH = "/usr/share/fonts/pickle-hwp/NotoSansCJKkr-Regular.otf"
 WIDTH, HEIGHT = 1080, 1920
+FPS = 30
 
 def get_font(size):
     return ImageFont.truetype(FONT_PATH, size)
@@ -24,51 +25,15 @@ def wrap_text(text, font, max_w, draw):
     if curr: lines.append(" ".join(curr))
     return lines
 
-def process_background(bg_path):
-    """Load, resize and crop to 1080x1920, and add subtle dark overlay for contrast."""
-    im = Image.open(bg_path).convert("RGB")
-    # Resize keeping aspect ratio to cover 1080x1920
-    im_ratio = im.width / im.height
-    target_ratio = WIDTH / HEIGHT
-    if im_ratio > target_ratio:
-        new_height = HEIGHT
-        new_width = int(HEIGHT * im_ratio)
-    else:
-        new_width = WIDTH
-        new_height = int(WIDTH / im_ratio)
-    im = im.resize((new_width, new_height), Image.Resampling.LANCZOS)
-    left = (new_width - WIDTH) // 2
-    top = (new_height - HEIGHT) // 2
-    im = im.crop((left, top, left + WIDTH, top + HEIGHT))
-
-    # Apply slight dark gradient at top and bottom for text readability
-    overlay = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
-    d_over = ImageDraw.Draw(overlay)
-    
-    # Top header shadow
-    for y in range(450):
-        alpha = int(180 * (1.0 - y / 450.0))
-        d_over.line([(0, y), (WIDTH, y)], fill=(10, 14, 22, alpha))
-        
-    # Subtitle area shadow (around y: 1100-1550)
-    for y in range(1050, 1600):
-        mid = 1300
-        dist = abs(y - mid) / 250.0
-        alpha = int(150 * max(0, 1.0 - dist))
-        d_over.line([(0, y), (WIDTH, y)], fill=(10, 14, 22, alpha))
-
-    # Bottom shadow
-    for y in range(HEIGHT - 200, HEIGHT):
-        alpha = int(180 * (y - (HEIGHT - 200)) / 200.0)
-        d_over.line([(0, y), (WIDTH, y)], fill=(10, 14, 22, alpha))
-
-    im = im.convert("RGBA")
-    im = Image.alpha_composite(im, overlay).convert("RGB")
-    return im
-
-def create_scene_frame(bg_path, header_title, header_sub, text, keyword, progress):
-    img = process_background(bg_path)
+def create_ui_overlay(header_title, header_sub, text, keyword, progress):
+    """Create a 1080x1920 transparent PNG overlay with Top Banner, Subtitles, Keyword & Progress Bar."""
+    img = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
+
+    # Top gradient shadow for header
+    for y in range(400):
+        alpha = int(160 * (1.0 - y / 400.0))
+        draw.line([(0, y), (WIDTH, y)], fill=(10, 14, 22, alpha))
 
     # 1. Top Header Title (Reels style: Big bold white headline)
     head_font = get_font(68)
@@ -76,7 +41,6 @@ def create_scene_frame(bg_path, header_title, header_sub, text, keyword, progres
     hw = h_bbox[2] - h_bbox[0]
     hx = (WIDTH - hw) // 2
     hy = 180
-    # Text stroke / shadow for header
     draw.text((hx, hy), header_title, font=head_font, fill=(255, 255, 255), stroke_width=4, stroke_fill=(15, 20, 30))
 
     # Top Subtitle line
@@ -95,17 +59,12 @@ def create_scene_frame(bg_path, header_title, header_sub, text, keyword, progres
     total_h = len(lines) * line_h
     start_y = 1250 - total_h // 2
 
-    # Draw semi-transparent pill backdrop behind subtitle for ultimate readability
+    # Draw semi-transparent pill backdrop behind subtitle
     pad_x, pad_y = 40, 25
     box_w = min(WIDTH - 100, max(draw.textbbox((0,0), l, font=sub_font)[2] - draw.textbbox((0,0), l, font=sub_font)[0] for l in lines) + pad_x*2)
     box_x = (WIDTH - box_w) // 2
     box_rect = [box_x, start_y - pad_y, box_x + box_w, start_y + total_h + pad_y]
-    
-    sub_bg = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
-    d_sub = ImageDraw.Draw(sub_bg)
-    d_sub.rounded_rectangle(box_rect, radius=24, fill=(15, 20, 30, 210), outline=(255, 255, 255, 40), width=2)
-    img = Image.alpha_composite(img.convert("RGBA"), sub_bg).convert("RGB")
-    draw = ImageDraw.Draw(img)
+    draw.rounded_rectangle(box_rect, radius=24, fill=(15, 20, 30, 215), outline=(255, 255, 255, 45), width=2)
 
     for i, line in enumerate(lines):
         l_bbox = draw.textbbox((0, 0), line, font=sub_font)
@@ -126,15 +85,25 @@ def create_scene_frame(bg_path, header_title, header_sub, text, keyword, progres
     # 4. Progress bar at bottom
     bar_w, bar_y = 960, 1830
     bar_x = (WIDTH - bar_w) // 2
-    draw.rounded_rectangle([bar_x, bar_y, bar_x + bar_w, bar_y + 10], radius=5, fill=(60, 70, 90))
+    draw.rounded_rectangle([bar_x, bar_y, bar_x + bar_w, bar_y + 10], radius=5, fill=(60, 70, 90, 180))
     fill_w = int(bar_w * max(0.05, min(1.0, progress)))
-    draw.rounded_rectangle([bar_x, bar_y, bar_x + fill_w, bar_y + 10], radius=5, fill=(255, 204, 0))
+    draw.rounded_rectangle([bar_x, bar_y, bar_x + fill_w, bar_y + 10], radius=5, fill=(255, 204, 0, 240))
 
     return img
 
 async def tts(text, voice, out_path):
-    c = edge_tts.Communicate(text, voice)
+    # rate=+14% for crisp energetic tempo, pitch=+1Hz
+    c = edge_tts.Communicate(text, voice, rate="+14%")
     await c.save(out_path)
+
+def trim_silence(in_path, out_path):
+    """Trim leading and trailing dead silence to keep pacing snappy."""
+    cmd = [
+        FFMPEG, "-y", "-i", in_path,
+        "-af", "silenceremove=start_periods=1:start_duration=0.04:start_threshold=-40dB,areverse,silenceremove=start_periods=1:start_duration=0.04:start_threshold=-40dB,areverse",
+        out_path
+    ]
+    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
 
 def get_audio_duration(path):
     cmd = [FFMPEG, "-i", path]
@@ -146,11 +115,26 @@ def get_audio_duration(path):
             return float(h)*3600 + float(m)*60 + float(s)
     return 3.0
 
+# Prepare motion zoompan filters for each scene
+MOTION_FILTERS = [
+    # Scene 1: Smooth Zoom In
+    "zoompan=z='min(zoom+0.0015,1.25)':d={frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps=30",
+    # Scene 2: Zoom in with subtle drift
+    "zoompan=z='min(zoom+0.0018,1.28)':d={frames}:x='(iw-iw/zoom)*0.55':y='(ih-ih/zoom)*0.45':s=1080x1920:fps=30",
+    # Scene 3: Smooth Zoom out
+    "zoompan=z='max(1.22-0.0015*on,1.0)':d={frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps=30",
+    # Scene 4: Zoom in from bottom-center
+    "zoompan=z='min(zoom+0.0016,1.26)':d={frames}:x='iw/2-(iw/zoom/2)':y='(ih-ih/zoom)*0.6':s=1080x1920:fps=30",
+    # Scene 5: Gentle Zoom in
+    "zoompan=z='min(zoom+0.0014,1.22)':d={frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps=30"
+]
+
 async def main():
-    os.makedirs("temp_health", exist_ok=True)
+    os.makedirs("temp_dynamic", exist_ok=True)
     os.makedirs("downloads", exist_ok=True)
 
-    voice = "ko-KR-SunHiNeural"
+    # Use HyunsuMultilingualNeural for most natural, human-sounding Korean narration
+    voice = "ko-KR-HyunsuMultilingualNeural"
     scenes = [
         {
             "bg": "downloads/bg_morning.png",
@@ -184,44 +168,56 @@ async def main():
             "bg": "downloads/bg_water.png",
             "header_title": "공복 추천 음식",
             "header_sub": "미온수 · 삶은 계란 · 양배추",
-            "text": "아침 공복에는 따뜻한 물 한 잔과 함께 삶은 계란이나 양배추를 챙겨 드시는 것이 가장 안전합니다.",
+            "text": "아침 공복에는 따뜻한 물 한 잔과 함께 삶은 계란이나 양배추를 드시는 것이 가장 안전합니다.",
             "keyword": "건강한 아침 식단"
         }
     ]
 
     concat_list = []
-    print(f"🎬 Processing {len(scenes)} scenes for Health Shorts...")
+    print(f"🎬 Processing {len(scenes)} scenes with Motion & Natural Voice...")
 
     for idx, sc in enumerate(scenes):
-        a_path = f"temp_health/a_{idx}.mp3"
-        f_path = f"temp_health/f_{idx}.png"
-        v_path = f"temp_health/v_{idx}.mp4"
+        raw_a = f"temp_dynamic/raw_a_{idx}.mp3"
+        trim_a = f"temp_dynamic/trim_a_{idx}.mp3"
+        ui_png = f"temp_dynamic/ui_{idx}.png"
+        scene_mp4 = f"temp_dynamic/scene_{idx}.mp4"
         prog = (idx + 1) / len(scenes)
 
-        print(f"  [{idx+1}/{len(scenes)}] Synthesizing audio & frame...")
-        await tts(sc["text"], voice, a_path)
-        dur = get_audio_duration(a_path) + 0.3
+        print(f"  [{idx+1}/{len(scenes)}] Synthesizing & trimming voice...")
+        await tts(sc["text"], voice, raw_a)
+        trim_silence(raw_a, trim_a)
+        dur = get_audio_duration(trim_a) # Exact audio duration, zero pause!
+        total_frames = int(dur * FPS) + 1
 
-        frame = create_scene_frame(sc["bg"], sc["header_title"], sc["header_sub"], sc["text"], sc["keyword"], prog)
-        frame.save(f_path)
+        # Create overlay
+        ui_img = create_ui_overlay(sc["header_title"], sc["header_sub"], sc["text"], sc["keyword"], prog)
+        ui_img.save(ui_png)
 
+        # Apply motion zoompan filter + overlay UI
+        motion_vf = MOTION_FILTERS[idx % len(MOTION_FILTERS)].format(frames=total_frames)
+        complex_filter = f"[0:v]{motion_vf}[bg];[bg][1:v]overlay=0:0[outv]"
+
+        print(f"    Rendering motion clip ({dur:.2f}s, {total_frames} frames)...")
         cmd = [
             FFMPEG, "-y",
-            "-loop", "1", "-t", str(dur), "-i", f_path,
-            "-i", a_path,
-            "-c:v", "libx264", "-tune", "stillimage",
+            "-loop", "1", "-i", sc["bg"],
+            "-loop", "1", "-i", ui_png,
+            "-i", trim_a,
+            "-filter_complex", complex_filter,
+            "-map", "[outv]", "-map", "2:a",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
             "-c:a", "aac", "-b:a", "192k", "-pix_fmt", "yuv420p",
-            "-shortest", v_path
+            "-t", str(dur),
+            scene_mp4
         ]
         subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-        concat_list.append(f"file '{os.path.abspath(v_path)}'")
-        print(f"    Scene {idx+1} rendered ({dur:.1f}s)")
+        concat_list.append(f"file '{os.path.abspath(scene_mp4)}'")
 
-    concat_txt = "temp_health/concat.txt"
+    concat_txt = "temp_dynamic/concat.txt"
     with open(concat_txt, "w") as f:
         f.write("\n".join(concat_list))
 
-    out_mp4 = "downloads/health_empty_stomach_short.mp4"
+    out_mp4 = "downloads/health_empty_stomach_dynamic.mp4"
     cmd = [
         FFMPEG, "-y",
         "-f", "concat", "-safe", "0", "-i", concat_txt,
@@ -229,9 +225,8 @@ async def main():
     ]
     subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
 
-    # Extract thumbnail
-    thumb = "downloads/health_thumbnail.jpg"
-    subprocess.run([FFMPEG, "-y", "-ss", "00:00:08", "-i", out_mp4, "-vframes", "1", thumb], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    print(f"✅ Finished: {out_mp4} & {thumb}")
+    thumb = "downloads/health_dynamic_thumb.jpg"
+    subprocess.run([FFMPEG, "-y", "-ss", "00:00:07", "-i", out_mp4, "-vframes", "1", thumb], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    print(f"✅ Dynamic Shorts Complete: {out_mp4} & {thumb}")
 
 asyncio.run(main())
