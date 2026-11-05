@@ -1,0 +1,47 @@
+name: 🎬 Render 1-Minute Trivia Short Video
+
+on:
+  workflow_dispatch:
+    inputs:
+      item_id:
+        description: '제작할 상식 주제 ID (data/trivia_samples.json 내 id)'
+        required: true
+        default: 'octopus_hearts'
+        type: choice
+        options:
+          - 'octopus_hearts'
+          - 'sleep_brain_clean'
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 코드 체크아웃
+        uses: actions/checkout@v4
+
+      - name: 🐍 파이썬 환경 설정
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      - name: 📦 FFmpeg 및 한글 폰트 설치
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg fonts-nanum
+
+      - name: 📚 파이썬 라이브러리 설치
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 🎥 1분 상식 쇼츠 자동 렌더링
+        run: |
+          python generate_video.py --item-id "${{ github.event.inputs.item_id }}" --output "output/trivia_shorts_${{ github.event.inputs.item_id }}.mp4"
+
+      - name: 📤 완성된 영상 파일 업로드 (다운로드용)
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivia-shorts-${{ github.event.inputs.item_id }}
+          path: output/*.mp4
+          retention-days: 7
