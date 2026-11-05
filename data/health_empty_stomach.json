@@ -1,0 +1,43 @@
+{
+  "id": "health_empty_stomach",
+  "title": "공복에 독이 되는 음식 3가지",
+  "category": "건강 상식",
+  "voice": "ko-KR-SunHiNeural",
+  "scenes": [
+    {
+      "bg": "assets/bg_morning.png",
+      "header_title": "공복에 독이 되는 음식",
+      "header_sub": "건강 상식 · 아침 식사 주의사항",
+      "text": "바쁜 아침 건강을 위해 공복에 챙겨 먹었다가, 오히려 위장을 망치는 음식들이 있습니다.",
+      "keyword": "공복 건강 주의"
+    },
+    {
+      "bg": "assets/bg_banana.png",
+      "header_title": "1. 바나나",
+      "header_sub": "마그네슘 불균형 · 심혈관 부담",
+      "text": "첫 번째는 바나나입니다. 공복에 먹으면 마그네슘 수치가 급상승해 혈액 내 칼륨 균형이 깨질 수 있습니다.",
+      "keyword": "바나나 공복 주의"
+    },
+    {
+      "bg": "assets/bg_tomato.png",
+      "header_title": "2. 토마토",
+      "header_sub": "타닌산 성분 · 위벽 자극과 속쓰림",
+      "text": "두 번째는 토마토입니다. 토마토의 타닌산이 위산과 결합하면 위 내부 압력을 높여 심한 속쓰림을 유발합니다.",
+      "keyword": "토마토 공복 주의"
+    },
+    {
+      "bg": "assets/bg_sweet_potato.png",
+      "header_title": "3. 고구마",
+      "header_sub": "아교질 · 타닌산 위산 과다 분비",
+      "text": "세 번째는 고구마입니다. 고구마 속 아교질이 위벽을 자극해 위산이 쏟아져 나오게 만듭니다.",
+      "keyword": "고구마 공복 주의"
+    },
+    {
+      "bg": "assets/bg_water.png",
+      "header_title": "공복 추천 음식",
+      "header_sub": "미온수 · 삶은 계란 · 양배추",
+      "text": "아침 공복에는 따뜻한 물 한 잔과 함께 삶은 계란이나 양배추를 챙겨 드시는 것이 가장 안전합니다.",
+      "keyword": "건강한 아침 식단"
+    }
+  ]
+}
